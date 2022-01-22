@@ -28,7 +28,7 @@ version = '1.dev.00'
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--tty",help="serial termninal to connect to lora",
-                    default="/dev/ttyUSB0")
+                    default="/dev/rak811")
 
 parser.add_argument("--debug", help="helps us debug",
                     action="store_true")
@@ -51,8 +51,8 @@ parser.add_argument("--update_station", help="Send station details (name, locati
 parser.add_argument('--station_key', help="Hardware key of the remote weather station. Default e660583883265039",
                      default="e660583883265039")
 
-parser.add_argument("--log_file", help="Location of log file - defauits to /var/log/weather.log",
-                    default = "/var/log/weather.log")
+parser.add_argument("--log_file", help="Location of log file - defauits to ''",
+                    default = "/var/log/basestation.log")
 
 parser.add_argument("--log", help="log level - suggest <info> when it is working",
                     default="DEBUG")
@@ -75,11 +75,16 @@ logging.basicConfig(
     filename=args.log_file,
     level=numeric_level)
 
-logger = logging.getLogger(('getweather.py: ' + version))
+logger = logging.getLogger(('basestation.py: ' + version))
 
 if args.debug:
     console_handler = logging.StreamHandler()
-    logger.addHandler(console_handler)
+    console_handler.setLevel(logging.DEBUG)
+    # simpler formatter for console
+    formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+    console_handler.setFormatter(formatter)
+    logging.getLogger('').addHandler(console_handler)
+    #logger.addHandler(console_handler)
     logger.debug('Running in debug mode')
 
 logger.info('Starting')
@@ -110,20 +115,33 @@ def open_serial():
 
     return ser
       
-def run_interactive(serial):
+def run_interactive(ser):
     # clear any crap from the seial link
     # discard = serial.readline().decode('utf-8')
     
-    wstation = weatherStation(args.station, serial, **postgres_params)
+    logger.info("Running in interactive mode")
+
+    wstation = weatherStation(args.station, ser, **postgres_params)
     
     while True:
         main_prompt = 'L(isten), listen and (C)ommit, send (T)ime, update station (D)etails, (Q)uit: '
         action = input(main_prompt)
         if (action.upper() == 'L' or action.upper() == 'C'):
             while True:
-                data = wstation.listen()
+                try:
+                    data = wstation.listen()
+                except serial.SerialException:
+                    logger.info("Serial port problem - will reopen")
+                    ser.close()
+                    sleep(10)
+                    ser = open_serial()
+                    logger.info("Serial port re-established - continuing with action:", action.upper())
+                    wstation = weatherStation(args.station, ser, **postgres_params)
+                    data = wstation.listen()
+
                 pd = wstation.parse_data(data)
-                print(pd)
+                
+                logger.debug(pd) 
                 
                 if action.upper() == 'C':
                     logger.info("Connecting to PostgreSQL server")
@@ -171,7 +189,7 @@ def main():
     
     response = ser.readline().decode('utf-8')
     
-    print('RAK811 version:', response)
+    logger.info("RAK811 version: %s", response)
     
     if args.interactive:
         run_interactive(ser)

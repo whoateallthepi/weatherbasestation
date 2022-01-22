@@ -14,18 +14,7 @@ import logging
 import collections
 import psycopg2
 
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
-def get_latest (con, station):
-    logger.debug('Get latest reading')
-    with con:
-      con.row_factory = sqlite3.Row
-      cur = con.cursor()
-      cur.execute("select * from reading group by station_id having time=max(time) and station_id=?;",
-                   station)
-      row = cur.fetchone()
-    return row
 
 
 class weatherStation(object):
@@ -33,29 +22,34 @@ class weatherStation(object):
   def _get_stations(self,**postgres_params):
     # gets the details of all the stations from the psql database
     # for future use
+    self.logger.debug("getting list of available weather stations from database")
     stations = {}
     try:
         pconn = psycopg2.connect(**postgres_params)
         pcur = pconn.cursor()
-        logger.debug("PostgreSQL connection open") 
+        self.logger.debug("PostgreSQL connection open") 
         pcur.execute("SELECT id,name, latitude, longitude, altitude, hardwarekey  FROM weather_station")
         stations = { col1:(col2, col3,col4,col5,col6) for (col1,col2,col3,col4,col5,col6) in pcur.fetchall()}
         pconn = None
      	# close the communication with the PostgreSQL
         pcur.close()
-        logger.debug("PostgreSQL connection closed")
+        self.logger.debug("PostgreSQL connection closed")
     except (Exception, psycopg2.DatabaseError) as error:
-        logger.error("PostgreSQL error")
-        logger.error(error)
+        self.logger.error("PostgreSQL error")
+        self.logger.error(error)
     finally:
         if pconn is not None:
             pconn.close()
-            logger.debug('PostgreSQL connection tidied up')
+            self.logger.debug('PostgreSQL connection tidied up')
     
     return stations 
 
   def __init__(self, station_id, serial, **postgres_params):
     # to do - validate ststaion key as 16 characters
+    self.logger = logging.getLogger(__name__)
+    self.logger.addHandler(logging.NullHandler())
+    self.logger.debug("initialising weatherStation object")
+    
     self.stations = self._get_stations(**postgres_params)
     # take station id & find the hardware_key
     self.station_name, self.latitude, self.longitude, self.altitude, self.hardware_key = self.stations[int(station_id)]
@@ -67,19 +61,21 @@ class weatherStation(object):
     ss = "at+set_config=lorap2p:transfer_mode:1\r\n"
     self.serial.write(bytes(ss,'utf-8'))
     response = self.serial.readline().decode('utf-8')
-    logger.debug('_rak811_set_receive. Response: %s', response)
+    self.logger.debug('_rak811_set_receive. Response: %s', response)
     return response
 
   def _rak811_set_send (self):
     ss = "at+set_config=lorap2p:transfer_mode:2\r\n"
     self.serial.write(bytes(ss,'utf-8'))
     response = self.serial.readline().decode('utf-8')
-    logger.debug('rak811_set_send. Response: %s', response)
+    self.logger.debug('rak811_set_send. Response: %s', response)
     return response
     
   def _rak811_send_data (self, message):
     
     #breakpoint()
+    self.logger.debug("Sending message: %s", message)
+    
     self._rak811_set_send()
     
     header = "at+send=lorap2p:" 
@@ -167,8 +163,7 @@ class weatherStation(object):
     while (rak811_data == ''):
       rak811_data = self.serial.readline().decode('utf-8')
     
-    print('Rak811 data: ',rak811_data)
-    logger.debug('rak811_data: %s', rak811_data) 
+    self.logger.debug('rak811_data: %s', rak811_data) 
     # need to check ID, really
     
     return rak811_data
@@ -291,6 +286,7 @@ class weatherStation(object):
     
     # only committing weather reports at moment
     if data['message_type'] != 100:
+      self.logger.info("Ignoring message type: %i", data['message_type'])
       return
 
     pquery = ("INSERT INTO weather_reading ( "
@@ -316,7 +312,7 @@ class weatherStation(object):
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                           "%s, %s, %s, %s, %s, %s, %s, %s, %s)" )     
 
-    logger.debug('postgreSQL query: %s', pquery) 
+    self.logger.debug('postgreSQL query: %s', pquery) 
 
     pvalues = [ data['timestamp'], # reading_time
                 station_id,
@@ -340,7 +336,7 @@ class weatherStation(object):
                 
       
     try:
-      logger.debug('Trying to update postgreSQL with query:')
+      self.logger.debug('Trying to update postgreSQL with query:')
 
       print (pquery, pvalues)
       #breakpoint()
@@ -350,11 +346,11 @@ class weatherStation(object):
 
       count = pcur.rowcount
       
-      logger.debug('%i record inserted into database.', count)
+      self.logger.debug('%i record inserted into database.', count)
 
     except (Exception, psycopg2.DatabaseError) as error:
-      logger.error("PostgreSQL error")
-      logger.error(error)
+      self.logger.error("PostgreSQL error")
+      self.logger.error(error)
     
     
 

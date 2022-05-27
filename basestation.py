@@ -48,8 +48,8 @@ parser.add_argument("--update_time", help="Send the current basestation time to 
 parser.add_argument("--update_station", help="Send station details (name, location, altitude) to weather station.",
                     action="store_true")
 
-parser.add_argument('--station_key', help="Hardware key of the remote weather station. Default e660583883265039",
-                     default="e660583883265039")
+#parser.add_argument('--station_key', help="Hardware key of the remote weather station. Default e660583883265039",
+#                     default="e660583883265039")
 
 parser.add_argument("--log_file", help="Location of log file - defauits to ''",
                     default = "/var/log/basestation.log")
@@ -98,7 +98,7 @@ port = args.tty
 baud = args.baud
 timeout = 10.0
 debug = args.debug
-station = args.station_key
+
 
 testing = False
 #testing = True
@@ -125,6 +125,7 @@ def run_interactive(ser):
     
     while True:
         main_prompt = 'L(isten), listen and (C)ommit, send (T)ime, update station (D)etails, (Q)uit: '
+        
         action = input(main_prompt)
         if (action.upper() == 'L' or action.upper() == 'C'):
             while True:
@@ -135,27 +136,30 @@ def run_interactive(ser):
                     ser.close()
                     sleep(10)
                     ser = open_serial()
-                    logger.info("Serial port re-established - continuing with action:", action.upper())
+                    logger.info("Serial port re-established - continuing with action: %s", action.upper())
                     wstation = weatherStation(args.station, ser, **postgres_params)
                     data = wstation.listen()
+
+                if data.find("ERROR")  != -1:
+                    logger.error("Error from RAK811. Message: %s", data)
+                    continue
 
                 pd = wstation.parse_data(data)
                 
                 logger.debug(pd) 
                 
-                if action.upper() == 'C':
+                if (action.upper() == 'C' and pd != None): # this is if we have any data 
                     logger.info("Connecting to PostgreSQL server")
                     try:
                         pconn = psycopg2.connect(**postgres_params)
                     except (Exception, psycopg2.DatabaseError) as error:
                         logger.error("Failed to connect to PostgreSQL")
                         logger.error(error)
-                
-                    pcur = pconn.cursor()
-                    wstation.commit_data(pcur,pd,4)
+                    
+                    wstation.commit_data(pconn,pd,4)
 
                     logger.debug("Closing connection to PostgreSQL server")
-                    pcur.close()
+                    pconn.close()
                     logger.debug("PostgreSQL connection closed")
                     
         elif action.upper() == 'T':

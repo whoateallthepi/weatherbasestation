@@ -30,9 +30,9 @@ class weatherStation(object):
         self.logger.debug("PostgreSQL connection open") 
         pcur.execute("SELECT id,name, latitude, longitude, altitude, hardwarekey  FROM weather_station")
         stations = { col1:(col2, col3,col4,col5,col6) for (col1,col2,col3,col4,col5,col6) in pcur.fetchall()}
-        pconn = None
+        
      	# close the communication with the PostgreSQL
-        pcur.close()
+        pconn.close()
         self.logger.debug("PostgreSQL connection closed")
     except (Exception, psycopg2.DatabaseError) as error:
         self.logger.error("PostgreSQL error")
@@ -44,8 +44,23 @@ class weatherStation(object):
     
     return stations 
 
+  def _rak811_set_receive (self):
+    ss = "at+set_config=lorap2p:transfer_mode:1\r\n"
+    self.serial.write(bytes(ss,'utf-8'))
+    response = self.serial.readline().decode('utf-8')
+    self.logger.debug('_rak811_set_receive. Response: %s', response)
+    return response
+
   def __init__(self, station_id, serial, **postgres_params):
     # to do - validate ststaion key as 16 characters
+    
+    self.VALID_MESSAGES = { 100 : "Weather Report", 
+                            101 : "Station report",
+                            200 : "Sync time",
+                            201 : "Update station data"} # The last two are outgoing messages - 
+                                                         # but we may get them from other base stations
+                                                         
+    
     self.logger = logging.getLogger(__name__)
     self.logger.addHandler(logging.NullHandler())
     self.logger.debug("initialising weatherStation object")
@@ -54,15 +69,11 @@ class weatherStation(object):
     # take station id & find the hardware_key
     self.station_name, self.latitude, self.longitude, self.altitude, self.hardware_key = self.stations[int(station_id)]
     self.station_id = station_id
+    
     self.serial = serial
-    
-    
-  def _rak811_set_receive (self):
-    ss = "at+set_config=lorap2p:transfer_mode:1\r\n"
-    self.serial.write(bytes(ss,'utf-8'))
-    response = self.serial.readline().decode('utf-8')
-    self.logger.debug('_rak811_set_receive. Response: %s', response)
-    return response
+
+    self._rak811_set_receive()
+        
 
   def _rak811_set_send (self):
     ss = "at+set_config=lorap2p:transfer_mode:2\r\n"
@@ -136,28 +147,32 @@ class weatherStation(object):
 
     message_type = hex(200).replace('0x','')
 
-    now_utc = (datetime.now(timezone.utc).timestamp())
-    now_local =  (datetime.now().timestamp())
+    time_now = datetime.now().astimezone()
+    
+    offset_seconds = time_now.utcoffset().total_seconds()
     
     # hours offset 
-    offset = round ((now_local - now_utc)/3600)
+    offset = round ((offset_seconds)/3600)
     
     if offset < 0:              # This is a fudge to generate 2s complement for -ve timezones
       offset = offset + 65536
     
+    #breakpoint()
+
     offset_hex = hex(offset).replace('0x','').zfill(4)
 
     #get another 'now' so we are synces as close as possible
 
     now_utc_hex = hex(round(datetime.now(timezone.utc).timestamp())).replace('0x','').zfill(8)
 
+    breakpoint()
     message = message_type + self.hardware_key + now_utc_hex + offset_hex
     
     self._rak811_send_data(message)
   
   
   def listen(self):
-    self._rak811_set_receive()
+    self._rak811_set_receive() # Just in case we are in the wrong mode
     rak811_data = ''
     
     while (rak811_data == ''):
@@ -171,7 +186,7 @@ class weatherStation(object):
   
   def parse_data(self, station_message):
     # define the splits in the data string
-
+    
     # all message types
     MESSAGE_TYPE  = slice(0,2)
     HARDWARE_ID   = slice(2,18)
@@ -205,23 +220,51 @@ class weatherStation(object):
   #            import pdb; pdb.set_trace()
     data_split = station_message.partition(":")  # now a tuple header, : , data
     data_hex = data_split[2]
-
-    message_type = int(data_hex[MESSAGE_TYPE],16) # convert from hex
+    header = data_split[0].split("=",1)[1] #will give us a string '-58,7,49'
+    RSSI, SNR, byte_count = header.split(",")
     
+    if int(byte_count) > 49:
+      self.logger.warning("Message is not recognised - ignoring:  %s", station_message)
+    
+       
     d = collections.OrderedDict() # for returning the data
     
     # following are for all message types
+    d['RSSI'] = int(RSSI)
+    d['SNR'] = int(SNR)
+    d['bytes'] = int(byte_count)
+    if d['bytes'] > 49:
+      d['Unrecognised data'] = station_message
+      self.logger.warning("Message is not recognised - stopping parse:  %s", station_message)
+      return d
+    
+    message_type = int(data_hex[MESSAGE_TYPE],16) # convert from hex  
+
+    if not message_type in self.VALID_MESSAGES:
+      self.logger.warning("Message is not recognised - stopping parse:  %s", station_message)
+      return d
+
     d['message_type'] = message_type
     d ['hardware_key'] = data_hex[HARDWARE_ID]
     d ['station'] = self.station_id 
     d ['epoch_time'] = int(data_hex[EPOCH_TIME],16)
     d ['timezone'] = int(data_hex[TIMEZONE],16)
-      
+        
+    if d ['hardware_key'] != self.hardware_key:
+      # rewrite station by looking up hardware key 
+      sid = '' # temp copy of station id for lookup
+      for key in self.stations:
+        if self.stations[key][4] == d ['hardware_key']:
+          sid = key
+          break
+      d['station'] = sid
+      self.logger.warning("Message not for this basestation %s - message is for station id: %i", self.station_id, sid)
+
     # Generate a text timestamp including the time zones
     # The pico RTC is not tz aware so this has to be done 
     # manually (and carefully!). Only doing full hours at the moment
 
-    ts = datetime.fromtimestamp(d['epoch_time'])
+    ts = datetime.utcfromtimestamp(d['epoch_time'])
     string_time = (ts.strftime('%Y-%m-%d %H:%M:%S'))
     
     # add the sign
@@ -238,7 +281,12 @@ class weatherStation(object):
 
     if message_type == 100: # weather report 
 
-      d ['wind_direction'] = int(data_hex[WIND_DIR],16)
+      wind_direction = int(data_hex[WIND_DIR],16)
+      if wind_direction > 0xcfff: # -ve number 2s complement
+        wind_direction = -1 * (0xffff - wind_direction + 1) # can be -1 when wind sensor is detached
+
+      d ['wind_direction'] = wind_direction
+
       d ['wind_speed'] = int(data_hex[WIND_SPEED],16)/100 # all but directions have 2 implied decimals 
       d ['wind_gust'] = int(data_hex[WIND_GUST],16)/100
       d ['wind_gust_dir'] = int(data_hex[WIND_GUST_DIR],16) 
@@ -273,22 +321,31 @@ class weatherStation(object):
 
       altitude = int(data_hex[ALTITUDE],16)
       if altitude > 0x7fff: # ive number
-        altitude = -1 * (0xffff - altitude +1)
+        altitude = -1 * (0xffff - altitude + 1 )
       d['altitude'] = altitude # no decimals
 
     else:
-      raise ValueError('unexpected message type: x' + message_type)
+      
+      self.logger.warning("Message type is not recognised: %i", message_type)
+      #raise ValueError('unexpected message type: x' + data_hex[MESSAGE_TYPE])
 
     return d
 
     
-  def commit_data(self,cursor,data,station_id):
+  def commit_data(self,connection,data,station_id):
+    
+    if data['station'] != self.station_id:
+      self.logger.warning("Message is not for this basestation - message for station id:%i", data['station'])
+      self.logger.warning("Not committing data to database")
+      return
     
     # only committing weather reports at moment
     if data['message_type'] != 100:
       self.logger.info("Ignoring message type: %i", data['message_type'])
       return
 
+    cursor = connection.cursor()            
+    
     pquery = ("INSERT INTO weather_reading ( "
                 "reading_time, "
                 "station_id, "
@@ -334,19 +391,22 @@ class weatherStation(object):
                 0,             # battery
                 0            ]  # light 
                 
-      
     try:
       self.logger.debug('Trying to update postgreSQL with query:')
 
-      print (pquery, pvalues)
+      #print (pquery, pvalues)
       #breakpoint()
-      pcur.execute (pquery, pvalues)
+      cursor.execute (pquery, pvalues)
 
-      pconn.commit()
+      connection.commit()
 
-      count = pcur.rowcount
+      count = cursor.rowcount
       
       self.logger.debug('%i record inserted into database.', count)
+
+      self.logger.debug("Closing cursor")
+      cursor.close()
+      self.logger.debug("Cursor closed")
 
     except (Exception, psycopg2.DatabaseError) as error:
       self.logger.error("PostgreSQL error")

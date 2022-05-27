@@ -233,7 +233,7 @@ class weatherStation(object):
     d['RSSI'] = int(RSSI)
     d['SNR'] = int(SNR)
     d['bytes'] = int(byte_count)
-    if d['bytes'] > 49:
+    if d['bytes'] > 49 or d['bytes'] < 10:
       d['Unrecognised data'] = station_message
       self.logger.warning("Message is not recognised - stopping parse:  %s", station_message)
       return d
@@ -241,6 +241,7 @@ class weatherStation(object):
     message_type = int(data_hex[MESSAGE_TYPE],16) # convert from hex  
 
     if not message_type in self.VALID_MESSAGES:
+      d['Unrecognised data'] = station_message
       self.logger.warning("Message is not recognised - stopping parse:  %s", station_message)
       return d
 
@@ -334,6 +335,11 @@ class weatherStation(object):
     
   def commit_data(self,connection,data,station_id):
     
+    if 'Unrecognised data' in data:
+      self.logger.warning("Attempt to commit 'Unrecognised data':%s", data['Unrecognised data'])
+      self.logger.warning("Not committing data to database")
+      return
+
     if data['station'] != self.station_id:
       self.logger.warning("Message is not for this basestation - message for station id:%i", data['station'])
       self.logger.warning("Not committing data to database")

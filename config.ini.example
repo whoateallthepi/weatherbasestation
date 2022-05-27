@@ -1,0 +1,14 @@
+# Example config file - amend to your params
+[postgresql]
+host=hostname
+database=dbname
+user=user
+password=password
+[mqtt]
+# Example for The Things Network
+USER = application@ttn
+PASSWORD = NNSXS.<application key>
+PUBLIC_TLS_ADDRESS = eu1.cloud.thethings.network
+PUBLIC_TLS_ADDRESS_PORT = 8883
+DEVICE_ID = eui-xxxxxxxxxxxxxxxxx
+ALL_DEVICES = True

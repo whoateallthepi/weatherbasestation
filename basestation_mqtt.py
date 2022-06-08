@@ -44,7 +44,7 @@ parser.add_argument("--station", help="Id of the station - default is '05'. Only
                    default='5')
 
 parser.add_argument("--action", help ="L(isten), listen and (C)ommit,"  +
-                    " update station (D)etails, (R)eboot, (Q)uit. Batch mode only",
+                    " update station (D)etails, (R)eboot, C(o)nfirm station data, (Q)uit. Batch mode only",
                     default = 'l')
 
 parser.add_argument("--update_time", help="Send the current basestation timezone to the weather station (message type 200).",
@@ -120,7 +120,7 @@ def main():
 
     if args.interactive:
         logger.info("Running in interactive mode")
-        main_prompt = 'L(isten), listen and (C)ommit, send (T)ime, update station (D)etails, (R)eboot, (Q)uit: '
+        main_prompt = 'L(isten), listen and (C)ommit, send (T)ime, update station (D)etails, C(o)nfirm station data, (R)eboot, (Q)uit: '
         action = input(main_prompt)
     else:
         logger.info("Running in batch mode")
@@ -143,6 +143,12 @@ def main():
         stationdata_message = ws.send_data()
         mqttc = ttnMQTT(ws, False, **mqtt_params)
         mqttc.process_link(direction = 'DOWNLINK', data = stationdata_message)
+    
+    elif action.upper() == 'O':
+        ws = weatherStation(station_id,**postgres_params)
+        requestdata_message = ws.request_data()
+        mqttc = ttnMQTT(ws, False, **mqtt_params)
+        mqttc.process_link(direction = 'DOWNLINK', data = requestdata_message)
     
     elif action.upper() == 'R':
         ws = weatherStation(station_id,**postgres_params)

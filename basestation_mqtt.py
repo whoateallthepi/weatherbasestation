@@ -27,7 +27,7 @@ from classes.thingsNetwork import weatherStation
 
 from classes.thingsNetwork import ttnMQTT
 
-version = '1.dev.00'
+version = '2.dev.2'
 
 # do the arguments
 
@@ -136,25 +136,23 @@ def main():
         ws = weatherStation(station_id, **postgres_params)
         offset_message = ws.sync_time()
         mqttc = ttnMQTT(ws, False, **mqtt_params)
-        mqttc.process_link(direction = 'DOWNLINK', data = offset_message)
+        mqttc.process_link(direction = 'DOWNLINK', data = offset_message, port = 200)
         
     elif action.upper() == 'D':
         ws = weatherStation(station_id,**postgres_params)
         stationdata_message = ws.send_data()
         mqttc = ttnMQTT(ws, False, **mqtt_params)
-        mqttc.process_link(direction = 'DOWNLINK', data = stationdata_message)
+        mqttc.process_link(direction = 'DOWNLINK', data = stationdata_message, port = 201)
     
     elif action.upper() == 'O':
         ws = weatherStation(station_id,**postgres_params)
-        requestdata_message = ws.request_data()
         mqttc = ttnMQTT(ws, False, **mqtt_params)
-        mqttc.process_link(direction = 'DOWNLINK', data = requestdata_message)
+        mqttc.process_link(direction = 'DOWNLINK', data = '', port = 202)
     
     elif action.upper() == 'R':
         ws = weatherStation(station_id,**postgres_params)
-        reboot_message = ws.reboot()
         mqttc = ttnMQTT(ws, False, **mqtt_params)
-        mqttc.process_link(direction = 'DOWNLINK', data = reboot_message)
+        mqttc.process_link(direction = 'DOWNLINK', data = '', port = 203)
 
     elif action.upper() == 'Q':
         exit()

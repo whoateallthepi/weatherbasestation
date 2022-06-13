@@ -31,7 +31,7 @@ class ttnMQTT(object):
         self.client_id = f'python=mqtt-{random.randint(0,1000)}'
         self.ttn_params = ttn_params
 
-    def process_link(self, direction='UPLINK', data=''):
+    def process_link(self, direction='UPLINK', data='', port = 0):
 
         # define callbacks
 
@@ -43,7 +43,6 @@ class ttnMQTT(object):
                 'weather_station']  # weatherStation object is in userdata
             data = weather_station.parse_data(parsed_json)
             self.logger.debug("Decoded data:%s", data)
-            #breakpoint()
 
             if 'No payload' in data:
                 self.logger.info("Ignoring message with no payload")
@@ -129,27 +128,31 @@ class ttnMQTT(object):
             #breakpoint()
             self.logger.info("Subscribing to topic %s with QOS: %d", topic,
                              qos)
+            
+            fport = port
+            qos = 0
+
+            #self.logger.info("Sending message via loraWAN port: %d ", port)
 
             if data != '':
-                fport = 3
-                qos = 0
                 b64 = base64.b64encode(bytes.fromhex(data)).decode()
-                self.logger.debug("Convert hex payload %s to base64 %s", data,
-                                  b64)
-                msg = '{"downlinks":[{"f_port":' + str(
-                    fport
-                ) + ',"frm_payload":"' + b64 + '","priority": "NORMAL"}]}'
+                self.logger.debug("Convert hex payload %s to base64 %s", data,b64)
+                
+            else:
+                b64 = 'AA==' # Zero
+                
 
-                result = mqttc.publish(topic, msg, qos)
-                # result: [0, 2]
-                status = result[0]
-                if status == 0:
-                    self.logger.info("Send %s to topic %s", msg, topic)
-                else:
-                    self.logger.info("Failed to send message to topic %s",
-                                     topic)
-                    print("Failed to send message to topic " + topic)
-
+            msg = '{"downlinks":[{"f_port":' + str(fport) + ',"frm_payload":"' + b64 + '","priority": "NORMAL"}]}'
+            
+            result = mqttc.publish(topic, msg, qos)
+            # result: [0, 2]
+            status = result[0]
+            if status == 0:
+                self.logger.info("Send %s to topic %s", msg, topic)
+            else:
+                self.logger.info("Failed to send message to topic %s",
+                                    topic)
+                print("Failed to send message to topic " + topic)
 
 class weatherStation(object):
 
@@ -212,13 +215,13 @@ class weatherStation(object):
     def send_data(self):
 
         # Generates a '201' message type
-        # C9|0050FA90|FFFD85D1|00BE
-        # ^       ^      ^      ^
+        # |0050FA90|FFFD85D1|00BE 
+        # ^     ^      ^      ^
         # message lat  long    alt
         # number
         # Both latitude and longitude have five implied decimal places
-        #
-        message_type = hex(201).replace('0x', '')
+        # Note message type is now transferred via loraWAN port number
+
 
         latitude_int = int(self.station_data[1] * 100000)
         if latitude_int < 0:
@@ -239,7 +242,7 @@ class weatherStation(object):
 
         altitude_hex = hex(altitude).replace('0x', '').zfill(4)
 
-        message = message_type + latitude_hex + longitude_hex + altitude_hex
+        message = latitude_hex + longitude_hex + altitude_hex
 
         return message
 
@@ -247,14 +250,15 @@ class weatherStation(object):
 
     def sync_time(self):
         # This is a '200' message type
-        # c8|ffff
+        #  ffff
         # ^         ^
         # message  time offset
         # number    (hours only)
+        # Note message number now transmitted via loraWAN port number
 
         # get utc time
 
-        message_type = hex(200).replace('0x', '')
+        #message_type = hex(200).replace('0x', '')
 
         time_now = datetime.now().astimezone()
 
@@ -270,17 +274,12 @@ class weatherStation(object):
 
         # get another 'now' so we are synces as close as possible
 
-        message = message_type + offset_hex
-
-        return message
+        return offset_hex
 
     def reboot(self):
-        # This is 203 mesage type
-        # cb
-        # ^ Message number
-
-        message_type = hex(203).replace('0x', '')
-        return message_type
+        # This is 203 message type - no data, the 203 is sent via the port number
+        # 
+        return ''
 
     def request_data (self):
       # This is 202 mesage type
@@ -339,30 +338,30 @@ class weatherStation(object):
         # all message types
         MESSAGE_TYPE = slice(0, 2)
 
-        EPOCH_TIME = slice(2, 10)
-        TIMEZONE = slice(10, 14)
+        EPOCH_TIME = slice(0, 8)
+        TIMEZONE = slice(8, 12)
 
         # for weather report - id 100 (0x64)
-        WIND_DIR = slice(14, 18)
-        WIND_SPEED = slice(18, 22)
-        WIND_GUST = slice(22, 26)
-        WIND_GUST_DIR = slice(26, 30)
-        WIND_SPEED_2M = slice(30, 34)
-        WIND_DIR_2M = slice(34, 38)
-        WIND_GUST_10M = slice(38, 42)
-        WIND_GUST_10M_DIRECTION = slice(42, 46)
-        HUMIDITY = slice(46, 50)
-        TEMPERATURE = slice(50, 54)
-        RAIN_1H = slice(54, 58)
-        RAIN_TODAY = slice(58, 62)
-        RAIN_SINCE_LAST = slice(62, 66)
-        BAR_UNCORRECTED = slice(66, 74)
-        BAR_CORRECTED = slice(74, 82)
+        WIND_DIR = slice(12, 16)
+        WIND_SPEED = slice(16, 20)
+        WIND_GUST = slice(20, 24)
+        WIND_GUST_DIR = slice(24, 28)
+        WIND_SPEED_2M = slice(28, 32)
+        WIND_DIR_2M = slice(32, 36)
+        WIND_GUST_10M = slice(36, 40)
+        WIND_GUST_10M_DIRECTION = slice(40, 44)
+        HUMIDITY = slice(44, 48)
+        TEMPERATURE = slice(48, 52)
+        RAIN_1H = slice(52, 56)
+        RAIN_TODAY = slice(56, 60)
+        RAIN_SINCE_LAST = slice(60, 64)
+        BAR_UNCORRECTED = slice(64, 72)
+        BAR_CORRECTED = slice(72, 80)
 
         # for station_report - id 101 (0x65)
-        LATITUDE = slice(14, 22)
-        LONGITUDE = slice(22, 30)
-        ALTITUDE = slice(30, 34)
+        LATITUDE = slice(12, 20)
+        LONGITUDE = slice(20, 28)
+        ALTITUDE = slice(28, 32)
 
         # get the data from the message
         dev_eui = parsed_json['end_device_ids']['device_id']
@@ -384,7 +383,7 @@ class weatherStation(object):
         d['RSSI'] = RSSI
         d['SNR'] = SNR
 
-        message_type = int(payload[MESSAGE_TYPE], 16)  # convert from hex
+        message_type = parsed_json['uplink_message']['f_port']
 
         if not message_type in self.VALID_MESSAGES:
             d['Unrecognised data'] = payload

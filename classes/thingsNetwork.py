@@ -106,7 +106,7 @@ class ttnMQTT(object):
         # Both sender and receiver are sure that the message was sent exactly once, using a kind of handshake
 
         qos = 0
-        #breakpoint()
+
         if direction == 'UPLINK':
 
             self.logger.info("Subscribing to topic # with QOS: %d", qos)
@@ -125,7 +125,7 @@ class ttnMQTT(object):
             topic = "v3/" + self.ttn_params[
                 'user'] + "/devices/" + self.ttn_params[
                     'device_id'] + "/down/push"
-            #breakpoint()
+            
             self.logger.info("Subscribing to topic %s with QOS: %d", topic,
                              qos)
             
@@ -210,8 +210,16 @@ class weatherStation(object):
         self.postgres_params = postgres_params
 
         self.logger.debug("weatherStation initialised")
-        #breakpoint()
+    
+    def _process_2s_complement_wind (self,sensor_direction):
+        # works for 3 hex digit integers only (ie up to 4095) 
+        # Could develop a more general proc?
 
+        if sensor_direction > 0xcff:  # -ve number 2s complement
+                return -1 * (0xfff - sensor_direction + 1)
+        else:
+            return sensor_direction
+                 
     def send_data(self):
 
         # Generates a '201' message type
@@ -250,7 +258,7 @@ class weatherStation(object):
 
     def sync_time(self):
         # This is a '200' message type
-        #  ffff
+        #  ff
         # ^         ^
         # message  time offset
         # number    (hours only)
@@ -268,11 +276,9 @@ class weatherStation(object):
         offset = round((offset_seconds) / 3600)
 
         if offset < 0:  # This is a fudge to generate 2s complement for -ve timezones
-            offset = offset + 65536
+            offset = offset + 256
 
-        offset_hex = hex(offset).replace('0x', '').zfill(4)
-
-        # get another 'now' so we are synces as close as possible
+        offset_hex = hex(offset).replace('0x', '').zfill(2)
 
         return offset_hex
 
@@ -338,30 +344,35 @@ class weatherStation(object):
         # all message types
         MESSAGE_TYPE = slice(0, 2)
 
-        EPOCH_TIME = slice(0, 8)
-        TIMEZONE = slice(8, 12)
+        OFFSET_TIME = slice(0, 8)
+        TIMEZONE = slice(8, 10)
 
-        # for weather report - id 100 (0x64)
-        WIND_DIR = slice(12, 16)
-        WIND_SPEED = slice(16, 20)
-        WIND_GUST = slice(20, 24)
-        WIND_GUST_DIR = slice(24, 28)
-        WIND_SPEED_2M = slice(28, 32)
-        WIND_DIR_2M = slice(32, 36)
-        WIND_GUST_10M = slice(36, 40)
-        WIND_GUST_10M_DIRECTION = slice(40, 44)
-        HUMIDITY = slice(44, 48)
-        TEMPERATURE = slice(48, 52)
-        RAIN_1H = slice(52, 56)
-        RAIN_TODAY = slice(56, 60)
-        RAIN_SINCE_LAST = slice(60, 64)
-        BAR_UNCORRECTED = slice(64, 72)
-        BAR_CORRECTED = slice(72, 80)
+        # for weather report - port 100  
+        WIND_DIR = slice(10, 13)
+        WIND_SPEED = slice(13, 17)
+        WIND_GUST = slice(17, 21)
+        WIND_GUST_DIR = slice(21, 24)
+        WIND_SPEED_2M = slice(24, 28)
+        WIND_DIR_2M = slice(28, 31)
+        WIND_GUST_10M = slice(31, 35)
+        WIND_GUST_10M_DIRECTION = slice(35, 38)
+        HUMIDITY = slice(38, 42)
+        TEMPERATURE = slice(42, 46)
+        RAIN_1H = slice(46, 50)
+        RAIN_TODAY = slice(50, 54)
+        RAIN_SINCE_LAST = slice(54, 58)
+        BAR_UNCORRECTED = slice(58, 62)
+        BAR_CORRECTED = slice(62, 66)
 
         # for station_report - id 101 (0x65)
-        LATITUDE = slice(12, 20)
-        LONGITUDE = slice(20, 28)
-        ALTITUDE = slice(28, 32)
+        LATITUDE = slice(10, 18)
+        LONGITUDE = slice(18, 26)
+        ALTITUDE = slice(26, 30)
+
+
+        # Baselines - used to save bytes should be the same as the weather station constants.h file
+        BASELINE_PRESSURE = 900.00
+        BASELINE_TIME = 1640995200 # 2022-01-01 00:00:00 GMT
 
         # get the data from the message
         dev_eui = parsed_json['end_device_ids']['device_id']
@@ -398,12 +409,13 @@ class weatherStation(object):
             if self.stations[key][4] == dev_eui_upper:
                 sid = key
                 break
-        #breakpoint()
+        
         d['station_id'] = sid
-        d['epoch_time'] = int(payload[EPOCH_TIME], 16)
+        
+        d['offset_time'] =  int(payload[OFFSET_TIME], 16) 
         d['timezone'] = int(payload[TIMEZONE], 16)
 
-        ts = datetime.utcfromtimestamp(d['epoch_time'])
+        ts = datetime.utcfromtimestamp(d['offset_time'] + BASELINE_TIME)
         d['timestamp'] = (ts.strftime('%Y-%m-%d %H:%M:%S')
                           ) + "+00:00"  # time from stations is always UTC
 
@@ -411,23 +423,22 @@ class weatherStation(object):
 
         if message_type == 100:  # weather report
 
-            wind_direction = int(payload[WIND_DIR], 16)
-            if wind_direction > 0xcfff:  # -ve number 2s complement
-                wind_direction = -1 * (
-                    0xffff - wind_direction + 1
-                )  # can be -1 when wind sensor is detached
-
-            d['wind_direction'] = wind_direction
+            # A disconnected wind vane returns -1 so allow for this. 
+            # Rarely the anenometer will be working and the vane not. So 
+            # do this for all direction readings
+                        
+            d['wind_direction'] = self._process_2s_complement_wind(int(payload[WIND_DIR], 16))
 
             d['wind_speed'] = int(
                 payload[WIND_SPEED],
                 16) / 100  # all but directions have 2 implied decimals
             d['wind_gust'] = int(payload[WIND_GUST], 16) / 100
-            d['wind_gust_dir'] = int(payload[WIND_GUST_DIR], 16)
+            d['wind_gust_dir'] = self._process_2s_complement_wind(int(payload[WIND_GUST_DIR], 16))
+             
             d['wind_speed_avg2m'] = int(payload[WIND_SPEED_2M], 16) / 100
-            d['wind_dir_avg2m'] = int(payload[WIND_DIR_2M], 16)
+            d['wind_dir_avg2m'] = self._process_2s_complement_wind(int(payload[WIND_DIR_2M], 16))
             d['wind_gust_10m'] = int(payload[WIND_GUST_10M], 16) / 100
-            d['wind_gust_dir_10m'] = int(payload[WIND_GUST_10M_DIRECTION], 16)
+            d['wind_gust_dir_10m'] = self._process_2s_complement_wind(int(payload[WIND_GUST_10M_DIRECTION], 16))
             d['humidity'] = int(payload[HUMIDITY], 16) / 100
             temperature = int(payload[TEMPERATURE], 16)
 
@@ -438,8 +449,8 @@ class weatherStation(object):
             d['rain_1h'] = int(payload[RAIN_1H], 16) / 100
             d['rain_since_last'] = int(payload[RAIN_SINCE_LAST], 16) / 100
             d['rain_today'] = int(payload[RAIN_TODAY], 16) / 100
-            d['bar_uncorrected'] = int(payload[BAR_UNCORRECTED], 16) / 100
-            d['bar_corrected'] = int(payload[BAR_CORRECTED], 16) / 100
+            d['bar_uncorrected'] = (int(payload[BAR_UNCORRECTED], 16) / 100) + BASELINE_PRESSURE
+            d['bar_corrected'] = (int(payload[BAR_CORRECTED], 16) / 100) + BASELINE_PRESSURE
 
         elif message_type == 101:  # station report
 

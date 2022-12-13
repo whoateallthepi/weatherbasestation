@@ -363,6 +363,7 @@ class weatherStation(object):
         RAIN_SINCE_LAST = slice(54, 58)
         BAR_UNCORRECTED = slice(58, 62)
         BAR_CORRECTED = slice(62, 66)
+        VOLTAGE = slice(66,70) 
 
         # for station_report - id 101 (0x65)
         LATITUDE = slice(10, 18)
@@ -373,6 +374,7 @@ class weatherStation(object):
         # Baselines - used to save bytes should be the same as the weather station constants.h file
         BASELINE_PRESSURE = 900.00
         BASELINE_TIME = 1640995200 # 2022-01-01 00:00:00 GMT
+        BASELINE_TEMPERATURE = 50.00 
 
         # get the data from the message
         dev_eui = parsed_json['end_device_ids']['device_id']
@@ -444,13 +446,14 @@ class weatherStation(object):
 
             if temperature > 0xcfff:  # -ve number - 2s complement
                 temperature = -1 * (0xffff - temperature + 1)
-            d['temperature'] = temperature / 100  # 2 decimals
+            d['temperature'] = round (((temperature / 100)  - BASELINE_TEMPERATURE),2) # 2 decimals
 
             d['rain_1h'] = int(payload[RAIN_1H], 16) / 100
             d['rain_since_last'] = int(payload[RAIN_SINCE_LAST], 16) / 100
             d['rain_today'] = int(payload[RAIN_TODAY], 16) / 100
             d['bar_uncorrected'] = (int(payload[BAR_UNCORRECTED], 16) / 100) + BASELINE_PRESSURE
-            d['bar_corrected'] = (int(payload[BAR_CORRECTED], 16) / 100) + BASELINE_PRESSURE
+            d['bar_corrected'] = round(((int(payload[BAR_CORRECTED], 16) / 100) + BASELINE_PRESSURE),2)
+            d['voltage'] = (int(payload[VOLTAGE], 16) / 100) 
 
         elif message_type == 101:  # station report
 
@@ -538,7 +541,7 @@ class weatherStation(object):
                 data['rain_since_last'],  # rain_since_last
                 data['bar_uncorrected'],  # bar_uncorrected
                 data['bar_corrected'],  # bar_corrected
-                0,  # battery
+                data['voltage'],  # battery
                 0
             ]  # light
 

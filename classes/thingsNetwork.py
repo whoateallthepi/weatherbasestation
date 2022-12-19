@@ -256,18 +256,19 @@ class weatherStation(object):
 
     # generate a message to sync the time zones
 
-    def sync_time(self):
+    def sync_time(self, seconds_correction = 0):
         # This is a '200' message type
-        #  ff
+        #  ff       07
         # ^         ^
-        # message  time offset
-        # number    (hours only)
+        # Timezone  Second correction
+        # offset
+        # (hours only)
         # Note message number now transmitted via loraWAN port number
 
         # get utc time
 
         #message_type = hex(200).replace('0x', '')
-
+        
         time_now = datetime.now().astimezone()
 
         offset_seconds = time_now.utcoffset().total_seconds()
@@ -275,12 +276,18 @@ class weatherStation(object):
         # hours offset
         offset = round((offset_seconds) / 3600)
 
+        offset = -1
+
         if offset < 0:  # This is a fudge to generate 2s complement for -ve timezones
             offset = offset + 256
+        
+        if seconds_correction < 0:  # This is a fudge to generate 2s complement for -ve corrections (ie station clock fast)
+            seconds_correction = seconds_correction + 256    
 
         offset_hex = hex(offset).replace('0x', '').zfill(2)
-
-        return offset_hex
+        correction_hex = hex(seconds_correction).replace('0x', '').zfill(2)
+         
+        return offset_hex + correction_hex
 
     def reboot(self):
         # This is 203 message type - no data, the 203 is sent via the port number
@@ -415,7 +422,12 @@ class weatherStation(object):
         d['station_id'] = sid
         
         d['offset_time'] =  int(payload[OFFSET_TIME], 16) 
-        d['timezone'] = int(payload[TIMEZONE], 16)
+        
+        timezone = int(payload[TIMEZONE], 16)
+        if timezone > 127:
+            timezone = timezone - 256
+
+        d['timezone'] = timezone
 
         ts = datetime.utcfromtimestamp(d['offset_time'] + BASELINE_TIME)
         d['timestamp'] = (ts.strftime('%Y-%m-%d %H:%M:%S')

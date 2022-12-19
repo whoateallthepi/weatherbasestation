@@ -18,6 +18,7 @@ from configparser import ConfigParser
 import io
 import os
 import sys
+import re
 
 # used to read the config file for postgreql - database.ini
 from config import config_new
@@ -132,9 +133,17 @@ def main():
         mqttc = ttnMQTT(ws, commit, **mqtt_params)
         mqttc.process_link(direction = 'UPLINK') # runs forever UPLINKs are device > TTN
         
-    elif action.upper() == 'T':
+    elif action.upper().startswith('T'):
         ws = weatherStation(station_id, **postgres_params)
-        offset_message = ws.sync_time()
+        if len(action) > 1:
+            # The string includes a seconds correction - get it
+            seconds_correct = int(re.findall(r'-?\d+', action) [0])
+        else:
+            seconds_correct = 0    
+        
+        offset_message = ws.sync_time(seconds_correct)
+        #breakpoint()
+        
         mqttc = ttnMQTT(ws, False, **mqtt_params)
         mqttc.process_link(direction = 'DOWNLINK', data = offset_message, port = 200)
         

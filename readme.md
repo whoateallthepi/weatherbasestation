@@ -15,7 +15,7 @@ As of this version the original basestation.py code has been superceded by bases
 | 100            | x64 | Contains the latest weather readings | weather station > base station |
 | 101            | x65 | Details of station including date, time, altitude and position | weather station > base station |
 | .. |
-| 200            | xc8 | Sends the current base station timezone to weather station for syncing | downlink base station > weather station |
+| 200            | xc8 | Sends the current base station timezone to weather station for syncing, plus a seconds adjutment for the clock (-127 to +127 ) | downlink base station > weather station |
 | 201            | xc9 | Sends the station details - altitude, position - to the weather tation |  downlink |
 | 202            | xca | Requests station to send a type 101 message at next opportunity | downlink |
 | 203            | xcb | Requests a software reboot of the weather station  (via the watchdog ) | downlink |

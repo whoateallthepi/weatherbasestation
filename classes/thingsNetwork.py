@@ -276,8 +276,6 @@ class weatherStation(object):
         # hours offset
         offset = round((offset_seconds) / 3600)
 
-        offset = -1
-
         if offset < 0:  # This is a fudge to generate 2s complement for -ve timezones
             offset = offset + 256
         
@@ -576,3 +574,4 @@ class weatherStation(object):
             if pconn is not None:
                 pconn.close()
                 self.logger.debug('PostgreSQL connection tidied up')
+

@@ -25,12 +25,12 @@ class metofficeWow(object):
             pcur = pconn.cursor()
             self.logger.debug("PostgreSQL connection open")
             pcur.execute(
-                "SELECT id,name, wow_station, wow_key FROM weather_station"
+                "SELECT id,name, wow_station, wow_key,  wow_last_upload FROM weather_station"
             )
            
             stations = {
-                col1: (col2, col3, col4)
-                for (col1, col2, col3, col4) in pcur.fetchall()
+                col1: (col2, col3, col4, col5)
+                for (col1, col2, col3, col4, col5) in pcur.fetchall()
             }
 
             # close the communication with the PostgreSQL
@@ -87,9 +87,6 @@ class metofficeWow(object):
         # windgustdir	0-360 degrees       wind_gust_dir_10m (km/h)
         # windgustmph   degrees             wind_gust_10m (km/h)
         
-        
-        
-        
         try:
             pconn = psycopg2.connect(**self.postgres_params)
             pcur = pconn.cursor()
@@ -118,11 +115,23 @@ class metofficeWow(object):
             result ['windspeedmph'] = convert.kph_to_mph(result.pop('wind_speed'))
             result ['windgustdir'] = result.pop('wind_gust_dir_10m')
             result ['windgustmph'] = convert.kph_to_mph(result.pop('wind_gust_10m'))
-            result ['softwaretype'] = self.software
+            
 
+            # calculate rain since last wow upload
+            total_query = 'select sum(rain_since_last) as accumulated_rain from weather_reading where station_id = %s' \
+                          'and reading_time > %s' 
+            pcur.execute(total_query, (self.station_id, self.station_data[3])) 
+            total_mm = pcur.fetchall()[0][0]
+            if total_mm is None: # happens if this is run when no previous uploads to wow
+                total_mm = 0.00
+
+            result['rainin'] = convert.mm_to_inches(total_mm)
+            
+            # Add in the wow keys and software id for upload
             result['siteid'] = self.station_data[1]
             result['siteAuthenticationKey'] = self.station_data[2]
-            
+            result ['softwaretype'] = self.software
+
             query_url = self.upload_url + parse.urlencode(result)
 
             if upload: 
